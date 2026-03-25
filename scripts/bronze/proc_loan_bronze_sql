@@ -1,0 +1,214 @@
+/*
+===============================================================================
+DDL Script: Create and Clean Bronze Tables (Manual Import Workflow)
+===============================================================================
+Script Purpose:
+    This script defines the 'Bronze Layer' (Raw Data) structure for MySQL.
+    Because the Table Data Import Wizard is used instead of 'LOAD DATA', 
+    we use a 'VARCHAR Staging Strategy'.
+
+Workflow:
+	0. Use Terminal open MySQLWorkbench "open /Applications/MySQLWorkbench.app"
+    Reference: https://www.youtube.com/watch?v=nXqwDcRF304
+    1. CREATE: Define all tables with VARCHAR columns to prevent import crashes.
+    2. IMPORT: Right-click table -> Table Data Import Wizard -> Select CSV.
+    3. CLEAN: Run the UPDATE NULLIF statements to turn empty strings ('') and spaces (' ') into NULLs.
+    4. TRANSFORM: Use UPDATE STR_TO_DATE to fix slashes (/) to dashes (-).
+    5. ALTER: Modify columns to final data types (INT, DATE, DECIMAL).
+===============================================================================
+*/
+
+
+/* LOAN DATA LOCAL INFILE 
+SET GLOBAL local_infile = 0;
+
+Gemini advice:
+Run the command: SET GLOBAL local_infile = 1;Load your data.
+Turn it back off when you are done by running: SET GLOBAL local_infile = 0;
+*/
+
+
+
+-- =============================================================================
+-- CRM TABLES: CLEANING & TYPE CONVERSION
+-- =============================================================================
+
+-- Table: crm_cust_info (Total: 18,493 rows)
+-- ------------------------------------------------------------------------------
+SELECT COUNT(*)FROM crm_cust_info;
+
+-- 1. Convert all empty strings to NULL (rows with space excluded)
+UPDATE crm_cust_info
+SET
+	cst_id = NULLIF(cst_id, ''),
+    cst_firstname = NULLIF(cst_firstname, ''),
+	cst_lastname = NULLIF(cst_lastname, ''),
+    cst_marital_status = NULLIF(cst_marital_status, ''),
+    cst_gndr = NULLIF(cst_gndr, ''),
+    cst_create_date = NULLIF(cst_create_date, '');
+
+-- 2. Format Dates (Slash to Dash)
+UPDATE crm_cust_info
+SET
+	cst_create_date = str_to_date(cst_create_date, '%Y/%m/%d')
+WHERE cst_create_date IS NOT NULL;
+
+-- 3. Finalize Data Types
+ALTER TABLE crm_cust_info
+MODIFY COLUMN cst_id INT,
+MODIFY COLUMN cst_create_date DATE;
+
+-- testing
+SELECT *
+FROM crm_cust_info
+WHERE cst_id 
+ORDER BY cst_create_date DESC;
+
+
+-- Table: crm_prd_info (Total: 397 rows)
+-- ------------------------------------------------------------------------------
+SELECT * FROM crm_prd_info;
+SELECT COUNT(*) FROM crm_prd_info;
+
+-- 1. Convert all empty strings to NULL (rows with space excluded)
+UPDATE crm_prd_info
+SET
+	prd_cost = NULLIF(prd_cost, ''),
+    prd_line = NULLIF(prd_line, ''),
+    prd_end_dt = NULLIF(prd_end_dt, '');
+
+-- 2. Format Dates
+UPDATE crm_prd_info
+SET
+	prd_start_dt = str_to_date(prd_start_dt, '%Y/%m/%d'),
+    prd_end_dt = str_to_date(prd_end_dt, '%Y/%m/%d')
+WHERE prd_end_dt IS NOT NULL;
+
+-- 3. Finalize Data Types
+ALTER TABLE crm_prd_info
+MODIFY COLUMN prd_cost DECIMAL (10,2),
+MODIFY COLUMN prd_start_dt DATE,
+MODIFY COLUMN prd_end_dt DATE;
+
+-- Testing
+SELECT 
+    prd_id,
+    prd_nm, 
+    prd_end_dt, 
+    prd_cost,
+    (prd_cost * 1.05) AS price_plus_tax -- Testing the math
+FROM crm_prd_info 
+ORDER BY prd_end_dt DESC; -- Testing the date sorting;
+
+
+-- Table: crm_sales_details
+-- ------------------------------------------------------------------------------
+SELECT * FROM crm_sales_details;
+SELECT COUNT(*) FROM crm_sales_details;
+
+Update crm_sales_details
+SET 
+	sls_cust_id = NULLIF(sls_cust_id, ''),
+    sls_order_dt = NULLIF(sls_order_dt, ''),
+    sls_ship_dt = NULLIF(sls_ship_dt, ''),
+    sls_due_dt = NULLIF(sls_due_dt, ''),
+    sls_sales = NULLIF(sls_sales, ''),	
+    sls_quantity = NULLIF(sls_quantity, ''),
+    sls_price = NULLIF(sls_price, '');
+
+ALTER TABLE crm_sales_details
+MODIFY COLUMN sls_cust_id INT,
+MODIFY COLUMN sls_order_dt INT,
+MODIFY COLUMN sls_ship_dt INT,
+MODIFY COLUMN sls_due_dt INT,
+MODIFY COLUMN sls_sales INT,
+MODIFY COLUMN sls_quantity INT,
+MODIFY COLUMN sls_price INT;
+
+SELECT
+	sls_cust_id,
+    sls_order_dt,
+    sls_sales
+FROM crm_sales_details
+WHERE sls_price IS NULL;
+
+
+-- =============================================================================
+-- ERP TABLES: CLEANING
+-- =============================================================================
+
+-- Table: erp_cust_az12
+-- ------------------------------------------------------------------------------
+SELECT COUNT(*)
+FROM erp_cust_az12 
+-- WHERE gen = '  ';
+WHERE gen IS NULL;
+SELECT COUNT(*) FROM erp_cust_az12;
+
+
+UPDATE erp_cust_az12
+SET 
+	gen = NULLIF(gen, '');
+
+-- Table: erp_loc_a101
+-- ------------------------------------------------------------------------------
+SELECT COUNT(*) 
+FROM erp_loc_a101
+WHERE CNTRY IS NULL;    -- Total "Empty Looking" Rows: 337 (332 NULL + 5 Space rows)
+
+UPDATE erp_loc_a101
+SET 
+	CNTRY = NULLIF(CNTRY, '');
+
+-- Using TRIM here captures the 1-space, 2-space, and 3-space "Ninjas"
+-- UPDATE erp_loc_a101
+-- SET CNTRY = NULLIF(TRIM(CNTRY), '');
+-- This handles cells with 1 space, 2 spaces, or 10 spaces all in one go. 
+-- It "trims" the spaces away first, then checks if it's empty. This solves your 1472 vs 1476 discrepancy permanently!
+
+
+-- Table: erp_px_cat_g1v2
+-- ------------------------------------------------------------------------------
+SELECT COUNT(*)
+FROM erp_px_cat_g1v2;
+
+
+-- =============================================================================
+-- FINAL VALIDATION: ROW COUNT REPORT
+-- =============================================================================
+SELECT 'crm_cust_info' AS table_name, COUNT(*) AS row_count FROM crm_cust_info
+UNION ALL
+SELECT 'crm_prd_info', COUNT(*) FROM crm_prd_info
+UNION ALL
+SELECT 'crm_sales_details', COUNT(*) FROM crm_sales_details
+UNION ALL
+SELECT 'erp_loc_a101', COUNT(*) FROM erp_loc_a101
+UNION ALL
+SELECT 'erp_cust_az12', COUNT(*) FROM erp_cust_az12
+UNION ALL
+SELECT 'erp_px_cat_g1v2', COUNT(*) FROM erp_px_cat_g1v2;
+
+
+
+-- =============================================================================
+-- OTHERS
+-- =============================================================================
+
+TRUNCATE TABLE crm_cust_info;
+
+/* SQL Server & mySQL difference:
+SQL Server:
+BULK INSERT crm_cust_info
+FORM 'file path'
+WITH (
+	FIRSTROW = 2,
+    FIELDTERMINATOR = ',',
+    TABLOCK
+    );
+
+MySQL (not working)
+LOAD DATA LOCAL INFILE 'file path'
+INTO TABLE crm_cust_info
+FIELDS TERMINATED BY ',' 
+IGNORE 1 ROWS;
+*/
